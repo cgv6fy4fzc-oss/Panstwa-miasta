@@ -81,20 +81,105 @@ async function wikiLookup(host: string, titles: string[]): Promise<Set<string> |
   }
 }
 
-// true = found in Wikipedia/Wiktionary, false = not found, null = unknown (empty answer or lookup failed).
+// ---- Category check via Wikidata (does this word exist AND fit the category?) ----
+type Rule = { match: RegExp; desc: RegExp; not?: RegExp };
+const RULES: Rule[] = [
+  { match: /państw|kraj/i, desc: /państw|kraj|republik|królestw|monarchi|federacj|sovereign state|country|republic|kingdom/i },
+  { match: /miast|miejscowo/i, desc: /miast|miejscowo|gmin|wieś|stolic|city|town|village|municipality|capital|commune/i },
+  { match: /rzek/i, desc: /rzek|potok|strumie|dopływ|river|stream|creek|tributary/i },
+  { match: /gór/i, desc: /gór|szczyt|pasmo|masyw|wzniesien|wulkan|mountain|peak|hill|range|massif|volcano/i },
+  { match: /morz|jezior/i, desc: /morz|jezior|ocean|zatok|zbiornik|sea|lake|bay|reservoir|gulf/i },
+  { match: /zwierz/i, desc: /zwierz|ssak|ptak|ryb|gad|płaz|owad|pająk|gatunek|rodzaj|animal|mammal|bird|fish|reptile|amphibian|insect|species|genus|arachnid|mollus|crustacean/i, not: /roślin|plant|drzew|kwiat|flower|tree|grzyb|fungus/i },
+  { match: /roślin/i, desc: /roślin|drzew|krzew|kwiat|traw|gatunek|rodzaj|plant|tree|shrub|flower|species|genus|herb/i, not: /zwierz|animal|ssak|ptak|mammal|bird|fish|ryb|insect|owad/i },
+  { match: /imi[ęe]/i, desc: /imi[ęe]|given name|first name|male name|female name/i },
+  { match: /zawód|zawod/i, desc: /zawód|profesj|stanowisk|specjalno|occupation|profession|job|position/i },
+  { match: /potraw|danie/i, desc: /potraw|dani|zup|ciast|napój|deser|przekąsk|sos|mięs|chleb|ser |food|dish|soup|cake|beverage|drink|dessert|snack|sauce|cuisine|bread|cheese|meat/i },
+  { match: /owoc|warzyw/i, desc: /owoc|warzyw|roślin|jagod|fruit|vegetable|plant|berry/i },
+  { match: /kolor/i, desc: /kolor|barw|colou?r|hue|shade/i },
+  { match: /marka/i, desc: /marka|przedsiębiorstw|firma|producent|koncern|spółk|brand|company|manufacturer|corporation|business|enterprise|trademark/i },
+  { match: /film|serial/i, desc: /film|serial|movie|series|animated/i },
+  { match: /sport/i, desc: /sport|dyscyplin|gra|game|discipline|athletic/i },
+  { match: /część ciała|czesc ciala/i, desc: /narząd|kość|mięsień|część ciała|organ|bone|muscle|body part|anatomical|gland|nerve|vein|artery/i },
+  { match: /pojazd/i, desc: /pojazd|samochód|statek|samolot|rower|motocykl|okręt|lokomotyw|vehicle|car|ship|aircraft|bicycle|motorcycle|locomotive|automobile|boat|train|truck/i },
+  { match: /ubrani|ubiór/i, desc: /ubiór|odzież|ubranie|garderob|clothing|garment|apparel|dress|shirt|footwear|shoe|hat/i },
+  { match: /instrument/i, desc: /instrument|muzyczn|musical/i },
+];
+const ruleFor = (category: string) => RULES.find((r) => r.match.test(category));
+
+type Candidate = { label: string; desc: string };
+
+async function wikidataCandidates(word: string): Promise<Candidate[] | null> {
+  const get = async (uselang: string): Promise<any[]> => {
+    const url = `https://www.wikidata.org/w/api.php?action=wbsearchentities&format=json&type=item&limit=15&language=pl&uselang=${uselang}&search=${encodeURIComponent(word)}`;
+    const res = await fetch(url, { headers: { "User-Agent": "panstwa-miasta-game/1.0" }, signal: AbortSignal.timeout(4500) });
+    if (!res.ok) throw new Error(String(res.status));
+    const data: any = await res.json();
+    return data.search ?? [];
+  };
+  try {
+    const [pl, en] = await Promise.all([get("pl"), get("en")]);
+    const byId = new Map<string, Candidate>();
+    for (const it of pl) byId.set(it.id, { label: it.match?.text ?? it.label ?? "", desc: it.description ?? "" });
+    for (const it of en) {
+      const c = byId.get(it.id);
+      if (c) c.desc += " " + (it.description ?? "");
+      else byId.set(it.id, { label: it.match?.text ?? it.label ?? "", desc: it.description ?? "" });
+    }
+    return [...byId.values()];
+  } catch {
+    return null;
+  }
+}
+
+async function mapPool<T, R>(items: T[], size: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(size, items.length) }, async () => {
+      while (next < items.length) {
+        const k = next++;
+        out[k] = await fn(items[k]);
+      }
+    }),
+  );
+  return out;
+}
+
+// true = fits the category (or exists, for categories without a rule), false = no match / misspelled,
+// null = unknown (empty answer or lookup failed).
 async function checkAnswers(room: Room): Promise<Hints> {
-  const words = new Set<string>();
-  for (const p of room.players)
-    for (const a of room.answers[p] ?? []) if (a.trim()) titleVariants(a).forEach((v) => words.add(v));
-  const list = [...words];
-  const [wp, wt] = list.length
-    ? await Promise.all([wikiLookup("pl.wikipedia.org", list), wikiLookup("pl.wiktionary.org", list)])
-    : [new Set<string>(), new Set<string>()];
+  const rules = room.categories.map(ruleFor);
+  const wdWords = new Set<string>();
+  const wpWords = new Set<string>();
+  for (const p of room.players) {
+    (room.answers[p] ?? []).forEach((a, ci) => {
+      const t = a.trim();
+      if (!t) return;
+      if (rules[ci]) wdWords.add(norm(t));
+      else titleVariants(t).forEach((v) => wpWords.add(v));
+    });
+  }
+  const wdList = [...wdWords];
+  const wpList = [...wpWords];
+  const [wdRes, [wp, wt]] = await Promise.all([
+    mapPool(wdList, 8, wikidataCandidates),
+    wpList.length
+      ? Promise.all([wikiLookup("pl.wikipedia.org", wpList), wikiLookup("pl.wiktionary.org", wpList)])
+      : Promise.resolve([new Set<string>(), new Set<string>()] as (Set<string> | null)[]),
+  ]);
+  const wd = new Map(wdList.map((w, i) => [w, wdRes[i]]));
   const hints: Hints = {};
   for (const p of room.players) {
-    hints[p] = (room.answers[p] ?? []).map((a) => {
-      if (!a.trim()) return null;
-      if (titleVariants(a).some((v) => wp?.has(v) || wt?.has(v))) return true;
+    hints[p] = (room.answers[p] ?? []).map((a, ci) => {
+      const t = a.trim();
+      if (!t) return null;
+      const rule = rules[ci];
+      if (rule) {
+        const cands = wd.get(norm(t));
+        if (!cands) return null;
+        return cands.some((c) => norm(c.label) === norm(t) && rule.desc.test(c.desc) && !(rule.not && rule.not.test(c.desc)));
+      }
+      if (titleVariants(t).some((v) => wp?.has(v) || wt?.has(v))) return true;
       return wp === null || wt === null ? null : false;
     });
   }
@@ -289,7 +374,7 @@ async function changeState(req: Request, pin: string) {
     changes = { status: "lobby", letter: "", round: 0, answers: {}, votes: {}, scores: {}, roundScores: {} };
   } else if (action === "check") {
     if (room.status !== "voting" && room.status !== "results") return Response.json({ hints: {} });
-    return Response.json({ hints: await checkAnswers(room) });
+    return Response.json({ hints: await checkAnswers(room), typed: room.categories.map((c) => !!ruleFor(c)) });
   } else if (action === "kick") {
     if (!isHost) return hostOnly();
     const target = cleanName(body.target);
