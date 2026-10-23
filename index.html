@@ -152,9 +152,9 @@
         <div class="bg-gray-800 p-5 rounded-2xl border border-gray-700 shadow-xl space-y-4">
             <div class="text-center">
                 <h2 class="text-2xl font-black text-indigo-400">Głosowanie</h2>
-                <p class="text-gray-400 text-xs">Oceń odpowiedzi innych: ✓ poprawna, ✗ błędna. Wpisy, których nie ma w Wikipedii ani Wikisłowniku (⚠), są odrzucane, chyba że ktoś da ✓. Punkty: 15 – tylko Ty masz taką odpowiedź, 10 – min. dwie osoby, 5 – wszyscy, 0 – błędna lub pusta.</p>
+                <p class="text-gray-400 text-xs">Oceń odpowiedzi innych graczy (swoich nie oceniasz): ✓ poprawna, ✗ błędna. Aplikacja sprawdza też, czy wpis pasuje do kategorii: ✓ pasuje, ⚠ nie pasuje lub literówka. Wpisy z ⚠ są odrzucane, chyba że ktoś da ✓. Punkty: 15 – tylko Ty masz taką odpowiedź, 10 – min. dwie osoby, 5 – wszyscy, 0 – błędna lub pusta.</p>
             </div>
-            <div id="verification-list" class="space-y-3 max-h-96 overflow-y-auto pr-1"></div>
+            <div id="verification-list" class="space-y-3"></div>
             <button id="score-btn" type="button" onclick="window.finishVoting(this)" class="hidden w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 rounded-xl shadow-lg transition active:scale-95">
                 Zakończ głosowanie i policz punkty
             </button>
@@ -605,7 +605,7 @@
                     const el = document.querySelector(`.hint[data-k="${oi}-${ci}"]`);
                     if (!el || v === null) return;
                     el.className = 'hint text-xs block ' + (v ? 'text-emerald-400' : 'text-amber-400');
-                    el.innerText = v ? '✓ znaleziono w słowniku' : '⚠ nie znaleziono – możliwa literówka';
+                    el.innerText = v ? (res.typed && res.typed[ci] ? '✓ pasuje do kategorii' : '✓ znaleziono w słowniku') : (res.typed && res.typed[ci] ? '⚠ nie pasuje do kategorii lub literówka' : '⚠ nie znaleziono – możliwa literówka');
                 }));
             } catch (e) {}
         }
