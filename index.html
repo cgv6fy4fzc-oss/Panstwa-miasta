@@ -152,7 +152,7 @@
         <div class="bg-gray-800 p-5 rounded-2xl border border-gray-700 shadow-xl space-y-4">
             <div class="text-center">
                 <h2 class="text-2xl font-black text-indigo-400">Głosowanie</h2>
-                <p class="text-gray-400 text-xs">Oceń odpowiedzi innych. Wpisy, których nie ma w Wikipedii ani Wikisłowniku (⚠), są odrzucane, chyba że ktoś da ✓.</p>
+                <p class="text-gray-400 text-xs">Oceń odpowiedzi innych: ✓ poprawna, ✗ błędna. Wpisy, których nie ma w Wikipedii ani Wikisłowniku (⚠), są odrzucane, chyba że ktoś da ✓. Punkty: 15 – tylko Ty masz taką odpowiedź, 10 – min. dwie osoby, 5 – wszyscy, 0 – błędna lub pusta.</p>
             </div>
             <div id="verification-list" class="space-y-3 max-h-96 overflow-y-auto pr-1"></div>
             <button id="score-btn" type="button" onclick="window.finishVoting(this)" class="hidden w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 rounded-xl shadow-lg transition active:scale-95">
@@ -245,7 +245,7 @@
             if (!('speechSynthesis' in window)) { sfx.tick(); return; }
             try {
                 speechSynthesis.cancel();
-                const u = new SpeechSynthesisUtterance(PL_NUMBERS[n]);
+                const u = new SpeechSynthesisUtterance(typeof n === 'number' ? PL_NUMBERS[n] : n);
                 u.lang = 'pl-PL'; u.rate = 1.1; u.volume = 1;
                 if (plVoice) u.voice = plVoice;
                 speechSynthesis.speak(u);
@@ -381,6 +381,7 @@
                 if (phase === 'verify') {
                     $('score-btn').classList.toggle('hidden', !isHost);
                     $('vote-guest').classList.toggle('hidden', isHost);
+                    updateTallies(data);
                 }
             } else if (data.status === 'results') {
                 if (phase !== 'leaderboard') showResults(data);
@@ -470,7 +471,7 @@
             const step = () => {
                 txt.innerText = seq[i];
                 txt.classList.remove('pop'); void txt.offsetWidth; txt.classList.add('pop');
-                if (i === seq.length - 1) sfx.go(); else sfx.count();
+                if (i === seq.length - 1) { sfx.go(); speakNumber('start'); } else speakNumber(['trzy', 'dwa', 'jeden'][i]);
                 i++;
                 endTimeout = setTimeout(i < seq.length ? step : () => { overlay.style.display = 'none'; beginRound(data); }, i < seq.length ? 800 : 700);
             };
@@ -554,39 +555,53 @@
         function showVoting(data) {
             show('verify');
             myVotes = {};
-            const list = $('verification-list');
-            const others = data.players.filter(p => p !== playerName);
-            if (!others.length) {
-                list.innerHTML = '<p class="text-center text-gray-400 text-sm">Grasz sam – nie ma kogo oceniać.</p>';
-            } else {
-                list.innerHTML = data.categories.map((cat, ci) => `
-                    <div class="bg-gray-900 p-3.5 rounded-xl border border-gray-700 space-y-2">
-                        <span class="text-xs text-gray-400 font-bold uppercase">${escapeHtml(cat)}</span>
-                        ${others.map((p, oi) => {
-                            const text = (data.answers[p] && data.answers[p][ci]) || '';
-                            const badLetter = text && text[0].toUpperCase() !== data.letter;
-                            let right = '<span class="text-xs text-gray-500">brak</span>';
-                            if (badLetter) right = '<span class="text-xs text-red-400 font-semibold">zła litera</span>';
-                            else if (text) right = `
-                                <span class="flex gap-1">
-                                    <button type="button" class="vote-btn bg-gray-700 text-gray-300 w-9 h-9 rounded-lg" data-target="${escapeHtml(p)}" data-cat="${ci}" data-ok="1"><i class="fa-solid fa-check"></i></button>
-                                    <button type="button" class="vote-btn bg-gray-700 text-gray-300 w-9 h-9 rounded-lg" data-target="${escapeHtml(p)}" data-cat="${ci}" data-ok="0"><i class="fa-solid fa-xmark"></i></button>
-                                </span>`;
-                            return `<div class="flex justify-between items-center gap-2">
-                                <div class="min-w-0"><span class="text-xs text-gray-500 block truncate">${escapeHtml(p)}</span>
-                                <span class="font-bold ${text && !badLetter ? 'text-white' : 'text-gray-500'} break-words">${text ? escapeHtml(text) : '—'}</span><span class="hint text-xs block" data-k="${oi}-${ci}"></span></div>${right}</div>`;
-                        }).join('')}
-                    </div>`).join('');
-            }
+            $('verification-list').innerHTML = data.categories.map((cat, ci) => `
+                <div class="bg-gray-900 p-3.5 rounded-xl border border-gray-700 space-y-2">
+                    <span class="text-xs text-gray-400 font-bold uppercase">${escapeHtml(cat)}</span>
+                    ${data.players.map((p, pi) => {
+                        const me = p === playerName;
+                        const text = (data.answers[p] && data.answers[p][ci]) || '';
+                        const badLetter = text && text[0].toUpperCase() !== data.letter;
+                        const prev = data.votes[[p, ci, playerName].join(SEP)];
+                        let right = '<span class="text-xs text-gray-500">brak</span>';
+                        if (badLetter) right = '<span class="text-xs text-red-400 font-semibold">zła litera</span>';
+                        else if (text && me) right = '<span class="text-xs text-gray-500">Twoja</span>';
+                        else if (text) right = `
+                            <span class="flex gap-1">
+                                <button type="button" class="vote-btn ${prev === true ? 'on-ok' : 'bg-gray-700 text-gray-300'} w-9 h-9 rounded-lg" data-target="${escapeHtml(p)}" data-cat="${ci}" data-ok="1"><i class="fa-solid fa-check"></i></button>
+                                <button type="button" class="vote-btn ${prev === false ? 'on-bad' : 'bg-gray-700 text-gray-300'} w-9 h-9 rounded-lg" data-target="${escapeHtml(p)}" data-cat="${ci}" data-ok="0"><i class="fa-solid fa-xmark"></i></button>
+                            </span>`;
+                        return `<div class="flex justify-between items-center gap-2">
+                            <div class="min-w-0"><span class="text-xs text-gray-500 block truncate">${escapeHtml(p)}${me ? ' (Ty)' : ''}</span>
+                            <span class="font-bold ${text && !badLetter ? 'text-white' : 'text-gray-500'} break-words">${text ? escapeHtml(text) : '—'}</span>
+                            <span class="hint text-xs block" data-k="${pi}-${ci}"></span>
+                            <span class="tally text-xs block text-gray-400" data-k="${pi}-${ci}"></span></div>${right}</div>`;
+                    }).join('')}
+                </div>`).join('');
             $('score-btn').classList.toggle('hidden', !isHost);
             $('vote-guest').classList.toggle('hidden', isHost);
+            updateTallies(data);
             loadHints(data);
+        }
+
+        function updateTallies(data) {
+            document.querySelectorAll('.tally').forEach(el => {
+                const [pi, ci] = el.dataset.k.split('-').map(Number);
+                const p = data.players[pi];
+                let ok = 0, bad = 0;
+                data.players.forEach(v => {
+                    if (v === p) return;
+                    const x = data.votes[[p, ci, v].join(SEP)];
+                    if (x === true) ok++; else if (x === false) bad++;
+                });
+                el.innerText = (ok || bad) ? `👍 ${ok}   👎 ${bad}` : '';
+            });
         }
 
         async function loadHints(data) {
             try {
                 const res = await act('check');
-                data.players.filter(p => p !== playerName).forEach((p, oi) => (res.hints[p] || []).forEach((v, ci) => {
+                data.players.forEach((p, oi) => (res.hints[p] || []).forEach((v, ci) => {
                     const el = document.querySelector(`.hint[data-k="${oi}-${ci}"]`);
                     if (!el || v === null) return;
                     el.className = 'hint text-xs block ' + (v ? 'text-emerald-400' : 'text-amber-400');
