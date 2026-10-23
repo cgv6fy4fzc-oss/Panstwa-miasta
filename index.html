@@ -15,12 +15,14 @@
         }
         .vote-btn.on-ok { background:#059669; color:#fff; }
         .vote-btn.on-bad { background:#dc2626; color:#fff; }
+        .pop { animation: pop .5s ease-out; }
+        @keyframes pop { 0%{transform:scale(.4);opacity:0} 70%{transform:scale(1.15)} 100%{transform:scale(1);opacity:1} }
     </style>
     <script>
         window.onerror = function(msg, url, line) { alert("Błąd: " + msg + " (linia " + line + ")"); };
     </script>
 </head>
-<body class="bg-gray-900 text-white min-h-screen font-sans flex flex-col justify-between p-4">
+<body class="bg-gray-900 text-white min-h-screen font-sans flex flex-col justify-between p-4" style="background:radial-gradient(ellipse at top,#312e81 0%,#111827 60%) fixed">
 
     <!-- 1. MENU -->
     <div id="screen-setup" class="max-w-md mx-auto w-full my-auto space-y-6">
@@ -85,8 +87,9 @@
                     </div>
                 </div>
                 <div>
-                    <label class="block text-xs font-semibold text-gray-300 uppercase mb-1">Kategorie (po przecinku, max 10)</label>
-                    <textarea id="categories-input" rows="2" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-indigo-500">Państwo, Miasto, Roślina / Zwierzę, Imię, Rzecz</textarea>
+                    <label class="block text-xs font-semibold text-gray-300 uppercase mb-1">Kategorie (max 15) – dotknij, aby dodać lub usunąć</label>
+                    <div id="chips-lobby" class="flex flex-wrap gap-1.5 mb-2"></div>
+                    <textarea id="categories-input" rows="3" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-indigo-500">Państwo, Miasto, Rzeka, Zwierzę, Roślina, Imię, Rzecz, Zawód</textarea>
                 </div>
                 <button type="button" onclick="window.sendStartGame(this)" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-4 rounded-xl shadow-xl transition transform active:scale-95 text-lg uppercase flex items-center justify-center gap-2 tracking-wide border-2 border-emerald-400">
                     <i class="fa-solid fa-play text-amber-300"></i> ROZPOCZNIJ GRĘ
@@ -101,6 +104,7 @@
 
     <!-- 3. GRA -->
     <div id="screen-game" class="max-w-md mx-auto w-full hidden space-y-4 my-auto">
+        <div id="go-overlay" style="display:none" class="fixed inset-0 z-50 items-center justify-center bg-black bg-opacity-75"><div id="go-text" class="text-8xl font-black text-amber-400"></div></div>
         <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 flex justify-between items-center shadow-lg">
             <div>
                 <span class="text-xs text-gray-400 font-bold block">LITERA</span>
@@ -138,7 +142,7 @@
         <div class="bg-gray-800 p-5 rounded-2xl border border-gray-700 shadow-xl space-y-4">
             <div class="text-center">
                 <h2 class="text-2xl font-black text-indigo-400">Głosowanie</h2>
-                <p class="text-gray-400 text-xs">Oceń odpowiedzi innych. Bez głosu odpowiedź z dobrą literą jest uznana.</p>
+                <p class="text-gray-400 text-xs">Oceń odpowiedzi innych. Wpisy, których nie ma w Wikipedii ani Wikisłowniku (⚠), są odrzucane, chyba że ktoś da ✓.</p>
             </div>
             <div id="verification-list" class="space-y-3 max-h-96 overflow-y-auto pr-1"></div>
             <button id="score-btn" type="button" onclick="window.finishVoting(this)" class="hidden w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 rounded-xl shadow-lg transition active:scale-95">
@@ -154,6 +158,11 @@
             <h2 id="lb-title" class="text-3xl font-black text-amber-400">Tabela Wyników</h2>
             <p id="lb-sub" class="text-gray-400 text-xs"></p>
             <div id="leaderboard-list" class="space-y-2 text-left bg-gray-900 p-4 rounded-xl"></div>
+            <div id="next-config" class="hidden text-left space-y-2">
+                <label class="block text-xs font-semibold text-gray-300 uppercase">Kategorie na następną rundę</label>
+                <div id="chips-next" class="flex flex-wrap gap-1.5"></div>
+                <textarea id="next-categories" rows="2" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-indigo-500"></textarea>
+            </div>
             <button id="next-btn" type="button" onclick="window.nextRound(this)" class="hidden w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 rounded-xl shadow-lg transition active:scale-95"></button>
             <p id="lb-guest" class="hidden text-gray-400 text-sm italic">Czekaj na gospodarza…</p>
         </div>
@@ -186,6 +195,54 @@
             SCREENS.forEach(s => $('screen-' + s).classList.toggle('hidden', s !== name));
         }
         const SEP = '\u0001';
+
+        // ---- Dźwięki ----
+        let audioCtx = null;
+        function unlockAudio() {
+            try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); } catch (e) {}
+        }
+        document.addEventListener('click', unlockAudio);
+        function beep(freq, dur, delay, type, vol) {
+            if (!audioCtx) return;
+            const t = audioCtx.currentTime + delay;
+            const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+            o.type = type; o.frequency.value = freq;
+            g.gain.setValueAtTime(vol, t);
+            g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+            o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t + dur);
+        }
+        const sfx = {
+            count() { beep(440, .12, 0, 'sine', .15); },
+            go() { beep(880, .3, 0, 'sine', .2); },
+            tick() { beep(660, .06, 0, 'square', .06); },
+            stop() { beep(220, .3, 0, 'sawtooth', .18); beep(220, .3, .35, 'sawtooth', .18); },
+            buzz() { beep(150, .6, 0, 'sawtooth', .2); },
+            done() { [523, 659, 784, 1047].forEach((f, i) => beep(f, .25, i * .15, 'triangle', .18)); }
+        };
+        const vibrate = pattern => { try { navigator.vibrate && navigator.vibrate(pattern); } catch (e) {} };
+
+        // ---- Podpowiedzi kategorii ----
+        const PRESET_CATS = ['Państwo', 'Miasto', 'Rzeka', 'Góry', 'Morze / Jezioro', 'Zwierzę', 'Roślina', 'Imię', 'Zawód', 'Rzecz', 'Potrawa', 'Owoc / Warzywo', 'Kolor', 'Marka', 'Film / Serial', 'Sport', 'Część ciała', 'Pojazd', 'Ubranie', 'Instrument'];
+        const getCats = ta => $(ta).value.split(',').map(x => x.trim()).filter(Boolean);
+        function renderChips(box, ta) {
+            const cur = getCats(ta).map(c => c.toLowerCase());
+            $(box).innerHTML = PRESET_CATS.map(c => `<button type="button" data-cat="${escapeHtml(c)}" class="chip text-xs px-2.5 py-1.5 rounded-full border ${cur.includes(c.toLowerCase()) ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-gray-900 border-gray-600 text-gray-300'}">${escapeHtml(c)}</button>`).join('');
+        }
+        function setupChips(box, ta) {
+            renderChips(box, ta);
+            $(box).addEventListener('click', e => {
+                const b = e.target.closest('.chip');
+                if (!b) return;
+                const list = getCats(ta);
+                const i = list.findIndex(x => x.toLowerCase() === b.dataset.cat.toLowerCase());
+                if (i >= 0) list.splice(i, 1); else if (list.length < 15) list.push(b.dataset.cat);
+                $(ta).value = list.join(', ');
+                renderChips(box, ta);
+            });
+            $(ta).addEventListener('input', () => renderChips(box, ta));
+        }
+        setupChips('chips-lobby', 'categories-input');
+        setupChips('chips-next', 'next-categories');
 
         let phase = 'setup';
         let room = null;
@@ -260,6 +317,7 @@
         function handleRoomUpdate(data) {
             if (data.version < lastVersion) return;
             lastVersion = data.version;
+            if (!data.players.includes(playerName)) { alert('Zostałeś usunięty z pokoju.'); leaveRoom(); return; }
             room = data;
             isHost = data.host === playerName;
 
@@ -269,7 +327,7 @@
             } else if (data.status === 'playing') {
                 if (data.round !== localRound) startRound(data);
             } else if (data.status === 'stop') {
-                if (phase === 'game' && !finalCountdown) triggerFinalCountdown('STOP!');
+                if (phase === 'game' && !finalCountdown) { if (roundLive) triggerFinalCountdown('STOP!'); else pendingStop = true; }
             } else if (data.status === 'voting') {
                 if (phase === 'game') endRound();
                 if (phase === 'game' || phase === 'wait') showVoting(data);
@@ -281,6 +339,13 @@
                 if (phase !== 'leaderboard') showResults(data);
             }
             if (phase === 'wait') updateWait();
+        }
+
+        function leaveRoom() {
+            stopListening(); clearTimers();
+            room = null; roomPin = ''; localRound = 0; roundLive = false;
+            $('go-overlay').style.display = 'none';
+            show('setup');
         }
 
         function clearTimers() { clearInterval(timerInterval); clearTimeout(endTimeout); }
@@ -305,6 +370,9 @@
                 item.innerHTML = `
                     <span class="font-semibold"><i class="fa-solid fa-user-astronaut text-indigo-400 mr-2.5"></i>${escapeHtml(p)}</span>
                     ${p === room.host ? '<span class="text-xs bg-amber-500 text-black font-bold px-2 py-0.5 rounded-full">GOSPODARZ</span>' : '<span class="text-xs bg-emerald-500 text-black font-bold px-2 py-0.5 rounded-full">GOTOWY</span>'}`;
+                if (isHost && p !== room.host) {
+                    item.insertAdjacentHTML('beforeend', `<span class="flex gap-1 ml-2"><button type="button" data-act="host" data-p="${escapeHtml(p)}" class="bg-amber-600 text-xs px-2 py-1 rounded-lg">👑</button><button type="button" data-act="kick" data-p="${escapeHtml(p)}" class="bg-red-700 text-xs px-2 py-1 rounded-lg">✕</button></span>`);
+                }
                 c.appendChild(item);
             });
             if (phase === 'lobby') {
@@ -315,7 +383,7 @@
 
         async function sendStartGame(btn) {
             if (!isHost) return;
-            const categories = $('categories-input').value.split(',').map(s => s.trim()).filter(Boolean).slice(0, 10);
+            const categories = $('categories-input').value.split(',').map(s => s.trim()).filter(Boolean).slice(0, 15);
             if (!categories.length) { alert('Podaj przynajmniej jedną kategorię.'); return; }
             setBusy(btn, true);
             try {
@@ -328,27 +396,50 @@
             finally { setBusy(btn, false); }
         }
 
+        let roundLive = false, pendingStop = false;
+
         function startRound(data) {
             localRound = data.round;
             currentLetter = data.letter;
+            roundLive = false; pendingStop = false; finalCountdown = false;
             show('game');
             $('inputs-container').innerHTML = data.categories.map((cat, i) => `
                 <div>
                     <label class="text-xs font-bold text-gray-400 uppercase">${escapeHtml(cat)}</label>
-                    <input type="text" maxlength="40" data-idx="${i}" autocomplete="off" class="game-input w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                    <input type="text" maxlength="40" data-idx="${i}" autocomplete="off" disabled class="game-input w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
                 </div>`).join('');
             $('current-letter').innerText = currentLetter;
+            $('current-letter').classList.remove('pop'); void $('current-letter').offsetWidth; $('current-letter').classList.add('pop');
             $('round-label').innerText = `RUNDA ${data.round}/${data.totalRounds}`;
-            finalCountdown = false;
-            $('status-badge').innerText = 'W trakcie';
+            $('status-badge').innerText = 'Start za chwilę';
             $('status-badge').className = 'bg-gray-700 text-gray-300 text-xs font-bold px-2.5 py-1 rounded-full';
+            $('timer').innerText = data.timeSelection === 'unlimited' ? '00:00' : data.timeSelection + 's';
             clearTimers();
+
+            const overlay = $('go-overlay'), txt = $('go-text');
+            const seq = ['3', '2', '1', 'START!'];
+            let i = 0;
+            overlay.style.display = 'flex';
+            const step = () => {
+                txt.innerText = seq[i];
+                txt.classList.remove('pop'); void txt.offsetWidth; txt.classList.add('pop');
+                if (i === seq.length - 1) sfx.go(); else sfx.count();
+                i++;
+                endTimeout = setTimeout(i < seq.length ? step : () => { overlay.style.display = 'none'; beginRound(data); }, i < seq.length ? 800 : 700);
+            };
+            step();
+        }
+
+        function beginRound(data) {
+            roundLive = true;
+            $('status-badge').innerText = 'W trakcie';
+            document.querySelectorAll('.game-input').forEach(inp => { inp.disabled = false; });
+            const first = document.querySelector('.game-input');
+            if (first) first.focus();
             if (data.timeSelection === 'unlimited') {
                 isUnlimited = true; elapsedSeconds = 0;
-                $('timer').innerText = '00:00';
             } else {
                 isUnlimited = false; timerSeconds = parseInt(data.timeSelection);
-                $('timer').innerText = timerSeconds + 's';
             }
             timerInterval = setInterval(() => {
                 if (isUnlimited && !finalCountdown) {
@@ -357,13 +448,15 @@
                 } else {
                     timerSeconds--;
                     $('timer').innerText = Math.max(timerSeconds, 0) + 's';
-                    if (timerSeconds <= 0) endRound();
+                    if (timerSeconds <= 0) { sfx.buzz(); endRound(); }
+                    else if (timerSeconds <= 5) sfx.tick();
                 }
             }, 1000);
+            if (pendingStop) { pendingStop = false; triggerFinalCountdown('STOP!'); }
         }
 
         async function pressStop() {
-            if (finalCountdown || phase !== 'game') return;
+            if (finalCountdown || phase !== 'game' || !roundLive) return;
             triggerFinalCountdown('STOP!');
             try { await act('stop'); } catch (e) { alert('Błąd: ' + e.message); }
         }
@@ -372,6 +465,7 @@
             if (finalCountdown) return;
             finalCountdown = true;
             isUnlimited = false;
+            sfx.stop(); vibrate([200, 100, 200]);
             $('status-badge').innerText = reason;
             $('status-badge').className = 'bg-red-600 text-white text-xs font-bold px-2.5 py-1 rounded-full pulse-red';
             timerSeconds = 10;
@@ -382,6 +476,7 @@
         async function endRound() {
             if (phase !== 'game') return;
             clearTimers();
+            roundLive = false;
             const answers = [...document.querySelectorAll('.game-input')].map(i => i.value.trim());
             show('wait');
             updateWait();
@@ -412,7 +507,7 @@
                 list.innerHTML = data.categories.map((cat, ci) => `
                     <div class="bg-gray-900 p-3.5 rounded-xl border border-gray-700 space-y-2">
                         <span class="text-xs text-gray-400 font-bold uppercase">${escapeHtml(cat)}</span>
-                        ${others.map(p => {
+                        ${others.map((p, oi) => {
                             const text = (data.answers[p] && data.answers[p][ci]) || '';
                             const badLetter = text && text[0].toUpperCase() !== data.letter;
                             let right = '<span class="text-xs text-gray-500">brak</span>';
@@ -424,12 +519,25 @@
                                 </span>`;
                             return `<div class="flex justify-between items-center gap-2">
                                 <div class="min-w-0"><span class="text-xs text-gray-500 block truncate">${escapeHtml(p)}</span>
-                                <span class="font-bold ${text && !badLetter ? 'text-white' : 'text-gray-500'} break-words">${text ? escapeHtml(text) : '—'}</span></div>${right}</div>`;
+                                <span class="font-bold ${text && !badLetter ? 'text-white' : 'text-gray-500'} break-words">${text ? escapeHtml(text) : '—'}</span><span class="hint text-xs block" data-k="${oi}-${ci}"></span></div>${right}</div>`;
                         }).join('')}
                     </div>`).join('');
             }
             $('score-btn').classList.toggle('hidden', !isHost);
             $('vote-guest').classList.toggle('hidden', isHost);
+            loadHints(data);
+        }
+
+        async function loadHints(data) {
+            try {
+                const res = await act('check');
+                data.players.filter(p => p !== playerName).forEach((p, oi) => (res.hints[p] || []).forEach((v, ci) => {
+                    const el = document.querySelector(`.hint[data-k="${oi}-${ci}"]`);
+                    if (!el || v === null) return;
+                    el.className = 'hint text-xs block ' + (v ? 'text-emerald-400' : 'text-amber-400');
+                    el.innerText = v ? '✓ znaleziono w słowniku' : '⚠ nie znaleziono – możliwa literówka';
+                }));
+            } catch (e) {}
         }
 
         $('verification-list').addEventListener('click', async e => {
@@ -463,22 +571,38 @@
                 : `Po rundzie ${data.round} z ${data.totalRounds} (litera ${data.letter})`;
             $('leaderboard-list').innerHTML = ranking.map((p, i) => `
                 <div class="flex justify-between items-center py-2 border-b border-gray-800 text-sm">
-                    <span class="font-semibold ${p === playerName ? 'text-indigo-300' : 'text-gray-300'}">${i + 1}. ${escapeHtml(p)}</span>
+                    <span class="font-semibold ${p === playerName ? 'text-indigo-300' : 'text-gray-300'}">${['🥇', '🥈', '🥉'][i] || (i + 1) + '.'} ${escapeHtml(p)}</span>
                     <span class="font-bold text-amber-400">+${data.roundScores[p] || 0} <span class="text-gray-400 font-normal">(suma: ${data.scores[p] || 0})</span></span>
                 </div>`).join('');
             const next = $('next-btn');
             next.innerHTML = last ? 'Powrót do Lobby <i class="fa-solid fa-rotate-left ml-2"></i>' : 'Następna runda <i class="fa-solid fa-forward ml-2"></i>';
             next.dataset.last = last ? '1' : '';
             next.classList.toggle('hidden', !isHost);
+            $('next-config').classList.toggle('hidden', !isHost || last);
+            if (isHost && !last) { $('next-categories').value = data.categories.join(', '); renderChips('chips-next', 'next-categories'); }
+            sfx.done();
             $('lb-guest').classList.toggle('hidden', isHost);
         }
 
         async function nextRound(btn) {
             setBusy(btn, true);
-            try { handleRoomUpdate(await act(btn.dataset.last ? 'lobby' : 'next')); }
+            const last = !!btn.dataset.last;
+            const categories = getCats('next-categories');
+            if (!last && !categories.length) { alert('Podaj przynajmniej jedną kategorię.'); setBusy(btn, false); return; }
+            try { handleRoomUpdate(await act(last ? 'lobby' : 'next', last ? {} : { categories })); }
             catch (e) { alert('Błąd: ' + e.message); }
             finally { setBusy(btn, false); }
         }
+
+        $('lobby-players-list').addEventListener('click', async e => {
+            const b = e.target.closest('button[data-act]');
+            if (!b) return;
+            const p = b.dataset.p;
+            if (b.dataset.act === 'kick' && !confirm('Usunąć gracza ' + p + '?')) return;
+            if (b.dataset.act === 'host' && !confirm('Przekazać rolę gospodarza graczowi ' + p + '?')) return;
+            try { handleRoomUpdate(await act(b.dataset.act, { target: p })); }
+            catch (err) { alert('Błąd: ' + err.message); }
+        });
 
         window.createRoom = createRoom;
         window.joinRoom = joinRoom;
