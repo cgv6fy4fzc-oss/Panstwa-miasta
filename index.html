@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Państwa-Miasta</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+        .pulse-red { animation: pulseRed 1s infinite; }
+        @keyframes pulseRed {
+            0%, 100% { background-color: rgba(239, 68, 68, 0.2); border-color: #ef4444; }
+            50% { background-color: rgba(239, 68, 68, 0.6); border-color: #f87171; }
+        }
+        .vote-btn.on-ok { background:#059669; color:#fff; }
+        .vote-btn.on-bad { background:#dc2626; color:#fff; }
+    </style>
+    <script>
+        window.onerror = function(msg, url, line) { alert("Błąd: " + msg + " (linia " + line + ")"); };
+    </script>
+</head>
+<body class="bg-gray-900 text-white min-h-screen font-sans flex flex-col justify-between p-4">
+
+    <!-- 1. MENU -->
+    <div id="screen-setup" class="max-w-md mx-auto w-full my-auto space-y-6">
+        <div class="text-center space-y-2">
+            <h1 class="text-4xl font-extrabold tracking-tight text-indigo-400">Państwa - Miasta</h1>
+            <p class="text-gray-400 text-sm">Graj na żywo na osobnych telefonach!</p>
+        </div>
+        <div class="bg-gray-800 p-6 rounded-2xl border border-gray-700 shadow-xl space-y-4">
+            <div>
+                <label class="block text-xs font-semibold text-gray-300 uppercase mb-2">Twój Pseudonim</label>
+                <input id="player-name" type="text" maxlength="24" value="Gracz1" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition">
+            </div>
+            <button type="button" onclick="window.createRoom(this)" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transition active:scale-95 flex items-center justify-center gap-2">
+                <i class="fa-solid fa-plus-circle"></i> Stwórz Nowy Pokój
+            </button>
+            <div class="relative flex py-2 items-center">
+                <div class="flex-grow border-t border-gray-700"></div>
+                <span class="flex-shrink mx-4 text-gray-500 text-xs font-bold uppercase">lub dołącz</span>
+                <div class="flex-grow border-t border-gray-700"></div>
+            </div>
+            <div class="flex gap-2">
+                <input id="room-code-input" type="number" placeholder="Kod PIN (4 cyfry)" class="w-2/3 bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-white text-center font-mono text-lg focus:outline-none focus:border-indigo-500">
+                <button type="button" onclick="window.joinRoom(this)" class="w-1/3 bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-xl transition active:scale-95">Dołącz</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. LOBBY -->
+    <div id="screen-lobby" class="max-w-md mx-auto w-full hidden space-y-6 my-auto">
+        <div class="bg-gray-800 p-6 rounded-2xl border border-gray-700 shadow-xl space-y-5 text-center">
+            <div class="bg-gray-900 p-4 rounded-xl border border-gray-700 space-y-1">
+                <span class="text-xs font-bold text-gray-400 uppercase tracking-widest block">KOD POKOJU PIN</span>
+                <div id="lobby-pin" class="text-5xl font-black text-amber-400 font-mono tracking-widest">----</div>
+                <p id="connection-status" class="text-xs text-emerald-400 mt-1">Połączono z serwerem gry</p>
+            </div>
+            <div class="text-left space-y-2">
+                <div class="flex justify-between items-center">
+                    <span class="text-xs font-bold text-gray-400 uppercase">Gracze w pokoju:</span>
+                    <span id="player-count" class="text-xs font-bold text-indigo-400">1 gracz</span>
+                </div>
+                <div id="lobby-players-list" class="space-y-2 bg-gray-900 p-3 rounded-xl max-h-48 overflow-y-auto"></div>
+            </div>
+
+            <div id="host-controls" class="pt-2 space-y-3 text-left">
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-300 uppercase mb-1">Czas</label>
+                        <select id="game-time-select" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-white text-sm">
+                            <option value="unlimited" selected>Bez limitu</option>
+                            <option value="30">30 sekund</option>
+                            <option value="60">60 sekund</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-300 uppercase mb-1">Rundy</label>
+                        <select id="rounds-select" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-white text-sm">
+                            <option value="1">1 runda</option>
+                            <option value="3" selected>3 rundy</option>
+                            <option value="5">5 rund</option>
+                            <option value="10">10 rund</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-300 uppercase mb-1">Kategorie (po przecinku, max 10)</label>
+                    <textarea id="categories-input" rows="2" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-indigo-500">Państwo, Miasto, Roślina / Zwierzę, Imię, Rzecz</textarea>
+                </div>
+                <button type="button" onclick="window.sendStartGame(this)" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-4 rounded-xl shadow-xl transition transform active:scale-95 text-lg uppercase flex items-center justify-center gap-2 tracking-wide border-2 border-emerald-400">
+                    <i class="fa-solid fa-play text-amber-300"></i> ROZPOCZNIJ GRĘ
+                </button>
+            </div>
+
+            <div id="guest-waiting" class="pt-2 text-gray-400 text-sm italic hidden">
+                <i class="fa-solid fa-spinner animate-spin mr-2 text-indigo-400"></i>Oczekiwanie na gospodarza...
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. GRA -->
+    <div id="screen-game" class="max-w-md mx-auto w-full hidden space-y-4 my-auto">
+        <div class="bg-gray-800 p-4 rounded-2xl border border-gray-700 flex justify-between items-center shadow-lg">
+            <div>
+                <span class="text-xs text-gray-400 font-bold block">LITERA</span>
+                <span id="current-letter" class="text-4xl font-black text-amber-400">-</span>
+            </div>
+            <div class="text-center">
+                <span id="round-label" class="text-xs font-bold text-gray-400 block">RUNDA 1/1</span>
+                <span id="status-badge" class="bg-gray-700 text-gray-300 text-xs font-bold px-2.5 py-1 rounded-full">W trakcie</span>
+            </div>
+            <div class="text-right">
+                <span class="text-xs text-gray-400 font-bold block">CZAS</span>
+                <span id="timer" class="text-3xl font-mono font-bold text-indigo-400">00:00</span>
+            </div>
+        </div>
+        <div id="inputs-container" class="bg-gray-800 p-5 rounded-2xl border border-gray-700 space-y-3"></div>
+        <button type="button" onclick="window.pressStop()" class="w-full bg-red-600 hover:bg-red-500 active:scale-95 text-white font-black py-4 rounded-2xl shadow-xl text-xl tracking-wider transition uppercase flex items-center justify-center gap-2">
+            <i class="fa-solid fa-hand"></i> STOP!
+        </button>
+    </div>
+
+    <!-- 4. CZEKANIE NA INNYCH -->
+    <div id="screen-wait" class="max-w-md mx-auto w-full hidden my-auto">
+        <div class="bg-gray-800 p-6 rounded-2xl border border-gray-700 shadow-xl space-y-4 text-center">
+            <i class="fa-solid fa-spinner animate-spin text-3xl text-indigo-400"></i>
+            <h2 class="text-xl font-black text-indigo-400">Odpowiedzi wysłane</h2>
+            <p id="wait-info" class="text-gray-400 text-sm">Czekam na pozostałych graczy…</p>
+            <button id="reveal-btn" type="button" onclick="window.forceReveal(this)" class="hidden w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-3 rounded-xl active:scale-95">
+                Przejdź do głosowania bez czekania
+            </button>
+        </div>
+    </div>
+
+    <!-- 5. GŁOSOWANIE -->
+    <div id="screen-verify" class="max-w-md mx-auto w-full hidden space-y-4 my-auto">
+        <div class="bg-gray-800 p-5 rounded-2xl border border-gray-700 shadow-xl space-y-4">
+            <div class="text-center">
+                <h2 class="text-2xl font-black text-indigo-400">Głosowanie</h2>
+                <p class="text-gray-400 text-xs">Oceń odpowiedzi innych. Bez głosu odpowiedź z dobrą literą jest uznana.</p>
+            </div>
+            <div id="verification-list" class="space-y-3 max-h-96 overflow-y-auto pr-1"></div>
+            <button id="score-btn" type="button" onclick="window.finishVoting(this)" class="hidden w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 rounded-xl shadow-lg transition active:scale-95">
+                Zakończ głosowanie i policz punkty
+            </button>
+            <p id="vote-guest" class="hidden text-center text-gray-400 text-sm italic">Gospodarz zakończy głosowanie…</p>
+        </div>
+    </div>
+
+    <!-- 6. WYNIKI -->
+    <div id="screen-leaderboard" class="max-w-md mx-auto w-full hidden space-y-4 my-auto">
+        <div class="bg-gray-800 p-6 rounded-2xl border border-gray-700 shadow-xl space-y-4 text-center">
+            <h2 id="lb-title" class="text-3xl font-black text-amber-400">Tabela Wyników</h2>
+            <p id="lb-sub" class="text-gray-400 text-xs"></p>
+            <div id="leaderboard-list" class="space-y-2 text-left bg-gray-900 p-4 rounded-xl"></div>
+            <button id="next-btn" type="button" onclick="window.nextRound(this)" class="hidden w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 rounded-xl shadow-lg transition active:scale-95"></button>
+            <p id="lb-guest" class="hidden text-gray-400 text-sm italic">Czekaj na gospodarza…</p>
+        </div>
+    </div>
+
+    <script type="module">
+        const POLL_INTERVAL_MS = 1000;
+        const $ = id => document.getElementById(id);
+        const SCREENS = ['setup', 'lobby', 'game', 'wait', 'verify', 'leaderboard'];
+
+        async function api(path, body) {
+            const res = await fetch('/api/rooms' + path, {
+                method: body ? 'POST' : 'GET',
+                headers: { 'Content-Type': 'application/json' },
+                body: body ? JSON.stringify(body) : undefined,
+                cache: 'no-store'
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+            return data;
+        }
+        const act = (action, extra = {}) => api('/' + roomPin + '/state', { name: playerName, action, ...extra });
+
+        function escapeHtml(value) {
+            return String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+        function setBusy(btn, busy) { if (btn) btn.disabled = busy; }
+        function show(name) {
+            phase = name;
+            SCREENS.forEach(s => $('screen-' + s).classList.toggle('hidden', s !== name));
+        }
+        const SEP = '\u0001';
+
+        let phase = 'setup';
+        let room = null;
+        let playerName = 'Gracz1';
+        let roomPin = '';
+        let isHost = false;
+        let localRound = 0;
+        let currentLetter = '';
+        let timerSeconds = 0, elapsedSeconds = 0;
+        let isUnlimited = true, finalCountdown = false;
+        let timerInterval = null, endTimeout = null;
+        let pollTimer = null, pollInFlight = false, lastVersion = 0;
+        let myVotes = {};
+
+        async function enterRoom(r, host) {
+            roomPin = r.pin;
+            isHost = host;
+            lastVersion = 0;
+            handleRoomUpdate(r);
+            listenToRoom();
+        }
+
+        async function createRoom(btn) {
+            setBusy(btn, true);
+            try {
+                playerName = $('player-name').value.trim() || 'Gracz1';
+                const r = await api('', { name: playerName });
+                playerName = r.host;
+                await enterRoom(r, true);
+            } catch (e) { alert('Błąd tworzenia pokoju: ' + e.message); }
+            finally { setBusy(btn, false); }
+        }
+
+        async function joinRoom(btn) {
+            playerName = $('player-name').value.trim() || 'Gracz1';
+            const pin = $('room-code-input').value.trim();
+            if (!/^\d{4}$/.test(pin)) { alert('Wpisz prawidłowy 4-cyfrowy kod PIN!'); return; }
+            setBusy(btn, true);
+            try {
+                const r = await api('/' + pin + '/join', { name: playerName });
+                await enterRoom(r, r.host === playerName);
+            } catch (e) { alert('Błąd dołączania: ' + e.message); }
+            finally { setBusy(btn, false); }
+        }
+
+        function stopListening() { clearInterval(pollTimer); pollTimer = null; }
+
+        function listenToRoom() {
+            stopListening();
+            const pin = roomPin;
+            const poll = async () => {
+                if (pollInFlight) return;
+                pollInFlight = true;
+                try {
+                    const r = await api('/' + pin);
+                    if (pollTimer && pin === roomPin) handleRoomUpdate(r);
+                    setConnectionStatus(true);
+                } catch (e) { setConnectionStatus(false); }
+                finally { pollInFlight = false; }
+            };
+            pollTimer = setInterval(poll, POLL_INTERVAL_MS);
+            poll();
+        }
+
+        function setConnectionStatus(ok) {
+            const el = $('connection-status');
+            el.innerText = ok ? 'Połączono z serwerem gry' : 'Brak połączenia – ponawiam…';
+            el.className = 'text-xs mt-1 ' + (ok ? 'text-emerald-400' : 'text-red-400');
+        }
+
+        // Maszyna stanów: serwer decyduje o statusie, klient dopasowuje ekran.
+        function handleRoomUpdate(data) {
+            if (data.version < lastVersion) return;
+            lastVersion = data.version;
+            room = data;
+            isHost = data.host === playerName;
+
+            if (data.status === 'lobby') {
+                if (phase !== 'lobby') { localRound = 0; clearTimers(); showLobbyScreen(); }
+                renderPlayersList();
+            } else if (data.status === 'playing') {
+                if (data.round !== localRound) startRound(data);
+            } else if (data.status === 'stop') {
+                if (phase === 'game' && !finalCountdown) triggerFinalCountdown('STOP!');
+            } else if (data.status === 'voting') {
+                if (phase === 'game') endRound();
+                if (phase === 'game' || phase === 'wait') showVoting(data);
+                if (phase === 'verify') {
+                    $('score-btn').classList.toggle('hidden', !isHost);
+                    $('vote-guest').classList.toggle('hidden', isHost);
+                }
+            } else if (data.status === 'results') {
+                if (phase !== 'leaderboard') showResults(data);
+            }
+            if (phase === 'wait') updateWait();
+        }
+
+        function clearTimers() { clearInterval(timerInterval); clearTimeout(endTimeout); }
+
+        function showLobbyScreen() {
+            show('lobby');
+            $('lobby-pin').innerText = roomPin;
+            renderPlayersList();
+            $('host-controls').classList.toggle('hidden', !isHost);
+            $('guest-waiting').classList.toggle('hidden', isHost);
+        }
+
+        function renderPlayersList() {
+            if (!room) return;
+            const players = room.players;
+            $('player-count').innerText = players.length + (players.length === 1 ? ' gracz' : ' graczy');
+            const c = $('lobby-players-list');
+            c.innerHTML = '';
+            players.forEach(p => {
+                const item = document.createElement('div');
+                item.className = 'text-sm text-gray-300 flex items-center justify-between bg-gray-800 px-3 py-2.5 rounded-lg border border-gray-700';
+                item.innerHTML = `
+                    <span class="font-semibold"><i class="fa-solid fa-user-astronaut text-indigo-400 mr-2.5"></i>${escapeHtml(p)}</span>
+                    ${p === room.host ? '<span class="text-xs bg-amber-500 text-black font-bold px-2 py-0.5 rounded-full">GOSPODARZ</span>' : '<span class="text-xs bg-emerald-500 text-black font-bold px-2 py-0.5 rounded-full">GOTOWY</span>'}`;
+                c.appendChild(item);
+            });
+            if (phase === 'lobby') {
+                $('host-controls').classList.toggle('hidden', !isHost);
+                $('guest-waiting').classList.toggle('hidden', isHost);
+            }
+        }
+
+        async function sendStartGame(btn) {
+            if (!isHost) return;
+            const categories = $('categories-input').value.split(',').map(s => s.trim()).filter(Boolean).slice(0, 10);
+            if (!categories.length) { alert('Podaj przynajmniej jedną kategorię.'); return; }
+            setBusy(btn, true);
+            try {
+                handleRoomUpdate(await act('start', {
+                    timeSelection: $('game-time-select').value,
+                    totalRounds: parseInt($('rounds-select').value),
+                    categories
+                }));
+            } catch (e) { alert('Błąd rozpoczynania gry: ' + e.message); }
+            finally { setBusy(btn, false); }
+        }
+
+        function startRound(data) {
+            localRound = data.round;
+            currentLetter = data.letter;
+            show('game');
+            $('inputs-container').innerHTML = data.categories.map((cat, i) => `
+                <div>
+                    <label class="text-xs font-bold text-gray-400 uppercase">${escapeHtml(cat)}</label>
+                    <input type="text" maxlength="40" data-idx="${i}" autocomplete="off" class="game-input w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                </div>`).join('');
+            $('current-letter').innerText = currentLetter;
+            $('round-label').innerText = `RUNDA ${data.round}/${data.totalRounds}`;
+            finalCountdown = false;
+            $('status-badge').innerText = 'W trakcie';
+            $('status-badge').className = 'bg-gray-700 text-gray-300 text-xs font-bold px-2.5 py-1 rounded-full';
+            clearTimers();
+            if (data.timeSelection === 'unlimited') {
+                isUnlimited = true; elapsedSeconds = 0;
+                $('timer').innerText = '00:00';
+            } else {
+                isUnlimited = false; timerSeconds = parseInt(data.timeSelection);
+                $('timer').innerText = timerSeconds + 's';
+            }
+            timerInterval = setInterval(() => {
+                if (isUnlimited && !finalCountdown) {
+                    elapsedSeconds++;
+                    $('timer').innerText = String(Math.floor(elapsedSeconds / 60)).padStart(2, '0') + ':' + String(elapsedSeconds % 60).padStart(2, '0');
+                } else {
+                    timerSeconds--;
+                    $('timer').innerText = Math.max(timerSeconds, 0) + 's';
+                    if (timerSeconds <= 0) endRound();
+                }
+            }, 1000);
+        }
+
+        async function pressStop() {
+            if (finalCountdown || phase !== 'game') return;
+            triggerFinalCountdown('STOP!');
+            try { await act('stop'); } catch (e) { alert('Błąd: ' + e.message); }
+        }
+
+        function triggerFinalCountdown(reason) {
+            if (finalCountdown) return;
+            finalCountdown = true;
+            isUnlimited = false;
+            $('status-badge').innerText = reason;
+            $('status-badge').className = 'bg-red-600 text-white text-xs font-bold px-2.5 py-1 rounded-full pulse-red';
+            timerSeconds = 10;
+            $('timer').innerText = '10s';
+            endTimeout = setTimeout(endRound, 10000);
+        }
+
+        async function endRound() {
+            if (phase !== 'game') return;
+            clearTimers();
+            const answers = [...document.querySelectorAll('.game-input')].map(i => i.value.trim());
+            show('wait');
+            updateWait();
+            try { handleRoomUpdate(await act('submit', { answers })); }
+            catch (e) { alert('Nie udało się wysłać odpowiedzi: ' + e.message); }
+        }
+
+        function updateWait() {
+            if (!room) return;
+            $('wait-info').innerText = `Odpowiedzi: ${room.submitted.length}/${room.players.length}. Czekam na pozostałych…`;
+            $('reveal-btn').classList.toggle('hidden', !isHost);
+        }
+        async function forceReveal(btn) {
+            setBusy(btn, true);
+            try { handleRoomUpdate(await act('reveal')); }
+            catch (e) { alert('Błąd: ' + e.message); }
+            finally { setBusy(btn, false); }
+        }
+
+        function showVoting(data) {
+            show('verify');
+            myVotes = {};
+            const list = $('verification-list');
+            const others = data.players.filter(p => p !== playerName);
+            if (!others.length) {
+                list.innerHTML = '<p class="text-center text-gray-400 text-sm">Grasz sam – nie ma kogo oceniać.</p>';
+            } else {
+                list.innerHTML = data.categories.map((cat, ci) => `
+                    <div class="bg-gray-900 p-3.5 rounded-xl border border-gray-700 space-y-2">
+                        <span class="text-xs text-gray-400 font-bold uppercase">${escapeHtml(cat)}</span>
+                        ${others.map(p => {
+                            const text = (data.answers[p] && data.answers[p][ci]) || '';
+                            const badLetter = text && text[0].toUpperCase() !== data.letter;
+                            let right = '<span class="text-xs text-gray-500">brak</span>';
+                            if (badLetter) right = '<span class="text-xs text-red-400 font-semibold">zła litera</span>';
+                            else if (text) right = `
+                                <span class="flex gap-1">
+                                    <button type="button" class="vote-btn bg-gray-700 text-gray-300 w-9 h-9 rounded-lg" data-target="${escapeHtml(p)}" data-cat="${ci}" data-ok="1"><i class="fa-solid fa-check"></i></button>
+                                    <button type="button" class="vote-btn bg-gray-700 text-gray-300 w-9 h-9 rounded-lg" data-target="${escapeHtml(p)}" data-cat="${ci}" data-ok="0"><i class="fa-solid fa-xmark"></i></button>
+                                </span>`;
+                            return `<div class="flex justify-between items-center gap-2">
+                                <div class="min-w-0"><span class="text-xs text-gray-500 block truncate">${escapeHtml(p)}</span>
+                                <span class="font-bold ${text && !badLetter ? 'text-white' : 'text-gray-500'} break-words">${text ? escapeHtml(text) : '—'}</span></div>${right}</div>`;
+                        }).join('')}
+                    </div>`).join('');
+            }
+            $('score-btn').classList.toggle('hidden', !isHost);
+            $('vote-guest').classList.toggle('hidden', isHost);
+        }
+
+        $('verification-list').addEventListener('click', async e => {
+            const btn = e.target.closest('.vote-btn');
+            if (!btn) return;
+            const { target, cat, ok } = btn.dataset;
+            const isOk = ok === '1';
+            const key = target + SEP + cat;
+            myVotes[key] = isOk;
+            btn.parentElement.querySelectorAll('.vote-btn').forEach(b => b.classList.remove('on-ok', 'on-bad'));
+            btn.classList.add(isOk ? 'on-ok' : 'on-bad');
+            try { await act('vote', { target, category: Number(cat), ok: isOk }); }
+            catch (err) { alert('Nie udało się zagłosować: ' + err.message); }
+        });
+
+        async function finishVoting(btn) {
+            setBusy(btn, true);
+            try { handleRoomUpdate(await act('score')); }
+            catch (e) { alert('Błąd: ' + e.message); }
+            finally { setBusy(btn, false); }
+        }
+
+        function showResults(data) {
+            show('leaderboard');
+            const last = data.round >= data.totalRounds;
+            const ranking = [...data.players].sort((a, b) => (data.scores[b] || 0) - (data.scores[a] || 0));
+            const top = data.scores[ranking[0]] || 0;
+            $('lb-title').innerText = last ? '🏆 Koniec gry' : 'Tabela Wyników';
+            $('lb-sub').innerText = last
+                ? 'Zwycięzca: ' + ranking.filter(p => (data.scores[p] || 0) === top).join(', ')
+                : `Po rundzie ${data.round} z ${data.totalRounds} (litera ${data.letter})`;
+            $('leaderboard-list').innerHTML = ranking.map((p, i) => `
+                <div class="flex justify-between items-center py-2 border-b border-gray-800 text-sm">
+                    <span class="font-semibold ${p === playerName ? 'text-indigo-300' : 'text-gray-300'}">${i + 1}. ${escapeHtml(p)}</span>
+                    <span class="font-bold text-amber-400">+${data.roundScores[p] || 0} <span class="text-gray-400 font-normal">(suma: ${data.scores[p] || 0})</span></span>
+                </div>`).join('');
+            const next = $('next-btn');
+            next.innerHTML = last ? 'Powrót do Lobby <i class="fa-solid fa-rotate-left ml-2"></i>' : 'Następna runda <i class="fa-solid fa-forward ml-2"></i>';
+            next.dataset.last = last ? '1' : '';
+            next.classList.toggle('hidden', !isHost);
+            $('lb-guest').classList.toggle('hidden', isHost);
+        }
+
+        async function nextRound(btn) {
+            setBusy(btn, true);
+            try { handleRoomUpdate(await act(btn.dataset.last ? 'lobby' : 'next')); }
+            catch (e) { alert('Błąd: ' + e.message); }
+            finally { setBusy(btn, false); }
+        }
+
+        window.createRoom = createRoom;
+        window.joinRoom = joinRoom;
+        window.sendStartGame = sendStartGame;
+        window.pressStop = pressStop;
+        window.forceReveal = forceReveal;
+        window.finishVoting = finishVoting;
+        window.nextRound = nextRound;
+    </script>
+</body>
+</html>
