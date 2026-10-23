@@ -101,7 +101,7 @@ async function checkAnswers(room: Room): Promise<Hints> {
   return hints;
 }
 
-// Scoring: 15 pts = only valid answer, 10 pts = unique, 5 pts = duplicated, 0 = empty/rejected.
+// Scoring: 15 = unique answer, 10 = shared by 2+ players, 5 = shared by everyone, 0 = empty/rejected.
 function scoreRound(room: Room, hints: Hints) {
   const result: Record<string, number> = Object.fromEntries(room.players.map((p) => [p, 0]));
   room.categories.forEach((_, ci) => {
@@ -123,9 +123,11 @@ function scoreRound(room: Room, hints: Hints) {
       valid.push({ player, key: norm(text) });
     }
     for (const { player, key } of valid) {
+      // 15 = nobody else has the same answer, 5 = every player has it, 10 = two or more (not all).
       const same = valid.filter((x) => x.key === key).length;
-      if (same > 1) result[player] += 5;
-      else result[player] += valid.length === 1 && room.players.length > 1 ? 15 : 10;
+      if (same === 1) result[player] += 15;
+      else if (same === room.players.length) result[player] += 5;
+      else result[player] += 10;
     }
   });
   return result;
