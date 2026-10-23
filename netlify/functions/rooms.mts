@@ -12,7 +12,7 @@ type Room = typeof rooms.$inferSelect;
 const error = (message: string, status: number) => Response.json({ error: message }, { status });
 
 const SEP = "\u0001";
-const MAX_CATEGORIES = 10;
+const MAX_CATEGORIES = 15;
 const ROUND_OPTIONS = [1, 3, 5, 10];
 
 // Answers and votes stay hidden until the voting phase starts.
@@ -39,8 +39,70 @@ const toClient = (room: Room) => {
 
 const norm = (v: string) => v.trim().toLowerCase().replace(/\s+/g, " ");
 
+type Hints = Record<string, (boolean | null)[]>;
+
+const cap = (v: string) => v.charAt(0).toUpperCase() + v.slice(1);
+const titleVariants = (w: string) => {
+  const t = w.replace(/[|#<>\[\]{}_]/g, " ").trim().replace(/\s+/g, " ");
+  const lower = t.toLowerCase();
+  return [...new Set([cap(t), cap(lower), lower.split(" ").map(cap).join(" ")])].filter(Boolean);
+};
+
+// Does a page with one of these titles exist on the given wiki? null = lookup failed.
+async function wikiLookup(host: string, titles: string[]): Promise<Set<string> | null> {
+  const found = new Set<string>();
+  const chunks: string[][] = [];
+  for (let i = 0; i < titles.length; i += 50) chunks.push(titles.slice(i, i + 50));
+  try {
+    await Promise.all(
+      chunks.map(async (chunk) => {
+        const url = `https://${host}/w/api.php?action=query&format=json&formatversion=2&redirects=1&titles=${encodeURIComponent(chunk.join("|"))}`;
+        const res = await fetch(url, {
+          headers: { "User-Agent": "panstwa-miasta-game/1.0" },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        const data: any = await res.json();
+        const toMap = (arr?: { from: string; to: string }[]) => new Map((arr ?? []).map((x) => [x.from, x.to]));
+        const normalized = toMap(data.query?.normalized);
+        const redirects = toMap(data.query?.redirects);
+        const ok = new Set<string>(
+          (data.query?.pages ?? []).filter((pg: any) => !pg.missing && !pg.invalid).map((pg: any) => pg.title),
+        );
+        for (const t of chunk) {
+          const n = normalized.get(t) ?? t;
+          if (ok.has(redirects.get(n) ?? n)) found.add(t);
+        }
+      }),
+    );
+    return found;
+  } catch {
+    return null;
+  }
+}
+
+// true = found in Wikipedia/Wiktionary, false = not found, null = unknown (empty answer or lookup failed).
+async function checkAnswers(room: Room): Promise<Hints> {
+  const words = new Set<string>();
+  for (const p of room.players)
+    for (const a of room.answers[p] ?? []) if (a.trim()) titleVariants(a).forEach((v) => words.add(v));
+  const list = [...words];
+  const [wp, wt] = list.length
+    ? await Promise.all([wikiLookup("pl.wikipedia.org", list), wikiLookup("pl.wiktionary.org", list)])
+    : [new Set<string>(), new Set<string>()];
+  const hints: Hints = {};
+  for (const p of room.players) {
+    hints[p] = (room.answers[p] ?? []).map((a) => {
+      if (!a.trim()) return null;
+      if (titleVariants(a).some((v) => wp?.has(v) || wt?.has(v))) return true;
+      return wp === null || wt === null ? null : false;
+    });
+  }
+  return hints;
+}
+
 // Scoring: 15 pts = only valid answer, 10 pts = unique, 5 pts = duplicated, 0 = empty/rejected.
-function scoreRound(room: Room) {
+function scoreRound(room: Room, hints: Hints) {
   const result: Record<string, number> = Object.fromEntries(room.players.map((p) => [p, 0]));
   room.categories.forEach((_, ci) => {
     const valid: { player: string; key: string }[] = [];
@@ -56,6 +118,8 @@ function scoreRound(room: Room) {
         else if (v === false) bad++;
       }
       if (bad > ok) continue;
+      // Not found in any dictionary: rejected unless somebody explicitly confirmed it.
+      if (hints[player]?.[ci] === false && ok === 0) continue;
       valid.push({ player, key: norm(text) });
     }
     for (const { player, key } of valid) {
@@ -209,17 +273,45 @@ async function changeState(req: Request, pin: string) {
   } else if (action === "score") {
     if (!isHost) return hostOnly();
     if (room.status !== "voting") return Response.json(toClient(room));
-    const roundScores = scoreRound(room);
+    const roundScores = scoreRound(room, await checkAnswers(room));
     const scores = { ...room.scores };
     for (const p of room.players) scores[p] = (scores[p] ?? 0) + (roundScores[p] ?? 0);
     changes = { status: "results", roundScores, scores };
   } else if (action === "next") {
     if (!isHost) return hostOnly();
     if (room.status !== "results" || room.round >= room.totalRounds) return Response.json(toClient(room));
-    changes = { status: "playing", letter: nextLetter(room.letter), round: room.round + 1, answers: {}, votes: {}, roundScores: {} };
+    const categories = cleanCategories(body.categories) ?? room.categories;
+    changes = { status: "playing", letter: nextLetter(room.letter), round: room.round + 1, categories, answers: {}, votes: {}, roundScores: {} };
   } else if (action === "lobby") {
     if (!isHost) return hostOnly();
     changes = { status: "lobby", letter: "", round: 0, answers: {}, votes: {}, scores: {}, roundScores: {} };
+  } else if (action === "check") {
+    if (room.status !== "voting" && room.status !== "results") return Response.json({ hints: {} });
+    return Response.json({ hints: await checkAnswers(room) });
+  } else if (action === "kick") {
+    if (!isHost) return hostOnly();
+    const target = cleanName(body.target);
+    if (target === room.host || !room.players.includes(target)) return error("Nie można usunąć tego gracza.", 400);
+    const players = room.players.filter((p) => p !== target);
+    const answers = { ...room.answers };
+    delete answers[target];
+    const scores = { ...room.scores };
+    delete scores[target];
+    const votes = Object.fromEntries(
+      Object.entries(room.votes).filter(([k]) => {
+        const [t, , v] = k.split(SEP);
+        return t !== target && v !== target;
+      }),
+    );
+    changes = { players, answers, scores, votes };
+    if ((room.status === "playing" || room.status === "stop") && Object.keys(answers).length >= players.length) {
+      changes.status = "voting";
+    }
+  } else if (action === "host") {
+    if (!isHost) return hostOnly();
+    const target = cleanName(body.target);
+    if (!room.players.includes(target)) return error("Nie ma takiego gracza.", 400);
+    changes = { host: target };
   } else {
     return error("Nieznana akcja.", 400);
   }
